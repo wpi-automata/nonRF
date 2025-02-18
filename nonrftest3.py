@@ -37,26 +37,28 @@ class FormationAgent(DynamicAgent):
 
     def stf(self):
         # Increment flagcounter; when it exceeds threshold, perform an update.
-        self.flagcounter += 1
-        if self.flagcounter >= (self.lm + self.lo):
+        #self.flagcounter += 1
+        # We assume that formation is completely synchronous and agents can keep track of that very well
+
+        #if self.flagcounter >= (self.lm + self.lo):
             # Compute rate of change based on neighbors' data.
-            rate_x = self.neighbor_sum_x - (len(self.msgs) * self.base_value[0])
-            rate_y = self.neighbor_sum_y - (len(self.msgs) * self.base_value[1])
+        rate_x = self.neighbor_sum_x - (len(self.msgs) * self.base_value[0])
+        rate_y = self.neighbor_sum_y - (len(self.msgs) * self.base_value[1])
 
-            # Update the internal (base) value using a consensus gain (alpha).
-            # This follows the discrete consensus equation from the PDF: Xn+1 = Xn + alpha * (neighbor_sum - N*Xn)
-            alpha = 0.3  # Consensus gain factor controlling convergence speed.
-            self.base_value[0] = round(self.base_value[0] + alpha * rate_x, 3)
-            self.base_value[1] = round(self.base_value[1] + alpha * rate_y, 3)
+        # Update the internal (base) value using a consensus gain (alpha).
+        # This follows the discrete consensus equation from the PDF: Xn+1 = Xn + alpha * (neighbor_sum - N*Xn)
+        alpha = 0.3  # Consensus gain factor controlling convergence speed.
+        self.base_value[0] = round(self.base_value[0] + alpha * rate_x, 3)
+        self.base_value[1] = round(self.base_value[1] + alpha * rate_y, 3)
 
-            # Update the physical position (base + fixed offset).
-            self.my_value[0] = round(self.base_value[0] + self.offset[0], 3)
-            self.my_value[1] = round(self.base_value[1] + self.offset[1], 3)
+        # Update the physical position (base + fixed offset).
+        self.my_value[0] = round(self.base_value[0] + self.offset[0], 3)
+        self.my_value[1] = round(self.base_value[1] + self.offset[1], 3)
 
-            # Reset counters and accumulators for the next cycle.
-            self.flagcounter = 0
-            self.clear_msgs()
-            self.clear_sum()
+        # Reset counters and accumulators for the next cycle.
+        #self.flagcounter = 0
+        self.clear_msgs()
+        self.clear_sum()
 
     def clear_msgs(self):
         # Clear stored messages after processing.
@@ -88,6 +90,77 @@ class FormationAgent(DynamicAgent):
 # ---------------------------------------------------
 # CenterAgent that moves toward a target at constant speed
 # ---------------------------------------------------
+###############################################################
+###############################################################
+# Steps  which we will be following #####
+#1.Agents will approach the target , when they reach near it ,within a specified distance , they make formation
+#2.Target will not be considered an agent
+#####Phase 1 -All agents can see the target and can transmit the signal to all other agents
+#1.Target moves independently. lets say at time t-1 target was at  the position X_t-1 . 
+#2.Each Agent will judge the new position of the target (change in position per iteration is velocity in discrete system).At time each agent has 
+#its own estimation i.e X_t(i) where i is ith agent
+#3.Since agents are transmitting the message through LEDs,few of the agents will judge the position earlier than others, one of the agents will
+#start message transmission. There is no bound over who will go first. This way in unbounded situation there is high probability of phase lag as
+#LED message transmission will take time and each agent can only send when their time period renews.
+#4.Each message transmission of target velocity will be considered as seperate complete consensus. After consensus this position will be saved in 
+# place of X_t-1.
+#5.This way asynchronous consensus will occur. Once they achieve a final consensus , it will act as velocity to each agent .
+#### We can compare these results with synchronous sytem###
+
+#### Benchmarking - 1.When alpha is less than 0.5 , asynchronous system should show a drift
+#####               2.When alpha is greater than 0.5 , with adjustment by values from our deduced equation ,asynchronous system will still work 
+#####                 but normal system will diverge
+
+######Phase 2 - Only few agents can see the result
+######1. Complete connected  graph will not be applicablenanymore
+######2.Agents with information will achieve asynchronous consensus
+######3.Ideally difference in behaviour of this system depends upon spread of phases. 
+
+#####Phase 3 - Can we apply it on formation control without going into second order systems ?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 class CenterAgent(DynamicAgent):
     def __init__(self, id, value, target):
         self.my_value = value    # Current position [x, y]
@@ -194,6 +267,8 @@ if __name__ == "__main__":
     iterations = 500  # Maximum iterations for phase 1.
     count = 0
     tolerance = 0.1  # Tolerance for convergence.
+
+    #centre agent moves lets assume 3 in x direction and 2 in one direction 
 
     while count < iterations:
         # Run one simulation cycle.
