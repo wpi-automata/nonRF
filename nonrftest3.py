@@ -111,7 +111,7 @@ class FormationAgent(DynamicAgent):
 #####               2.When alpha is greater than 0.5 , with adjustment by values from our deduced equation ,asynchronous system will still work 
 #####                 but normal system will diverge
 
-######Phase 2 - Only few agents can see the result
+######Phase 2 - Only few agents can see the position of the target
 ######1. Complete connected  graph will not be applicablenanymore
 ######2.Agents with information will achieve asynchronous consensus
 ######3.Ideally difference in behaviour of this system depends upon spread of phases. 

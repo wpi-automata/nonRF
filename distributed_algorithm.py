@@ -4,7 +4,7 @@ from network_agent import NetworkAgent
 from network_agent import DynamicAgent
 
 
-def run_sim(agents: list[DynamicAgent], G: nx.graph, return_agents: bool = False, ctl: bool = False):
+def run_sim(agents: list[DynamicAgent], G: nx.graph, return_agents: bool = False, ctl: bool = False,target_pos=False):
     '''
     This function will execute a generic distributed algorithm as discussed in RBE 510.
     It operates on the NetworkAgent subclass and its related methods.
@@ -27,38 +27,53 @@ def run_sim(agents: list[DynamicAgent], G: nx.graph, return_agents: bool = False
     
 
     # Main simulation loop
-        
+    ###just to get consensus on position of target
+    if target_pos:
+        for ii,jj in product(range(n),range(n)):
+            if (ii,jj) in G.edges and ii!=jj:
+                agents[ii].add_vel_target_msg(agents[jj].vel_target_msg())
+                agents[ii].total_vel_target_msg(agents[jj].vel_target_msg())
+                
+                    
+            # Execute state transition function for each agent
+        for ii in range(n):
+            agents[ii].vel_target_stf()
+
+        for ii in range(n):
+                agents[ii].clear_vel_target()
+                agents[ii].clear_vel_target_sum()
        
 
-
+    else:
         # Send messages for each edge in the graph
-    for ii,jj in product(range(n),range(n)):
-        if (ii,jj) in G.edges and ii!=jj:
-            agents[ii].add_msg(agents[jj].msg())
-            agents[ii].total_msg(agents[jj].msg())
-            
+        for ii,jj in product(range(n),range(n)):
+            if (ii,jj) in G.edges and ii!=jj:
+                agents[ii].add_msg(agents[jj].msg())
+                agents[ii].add_offset_msg(agents[jj].offset_msg())
+                agents[ii].total_msg(agents[jj].msg(),agents[jj].offset_msg())
                 
-        # Execute state transition function for each agent
-    for ii in range(n):
-        agents[ii].stf()
-
-        # Simulate dynamics if they are included
-    if ctl == True:
-
-            # Compute control action
-       # for ii in range(n):
-            #agents[ii].ctl()
-
-            # Step agents forward
+                    
+            # Execute state transition function for each agent
         for ii in range(n):
-            agents[ii].step()
+            agents[ii].stf()
 
-        # Clear messages for next round
-    for ii in range(n):
-            agents[ii].clear_msgs()
-            agents[ii].clear_sum()
-    
-    # Return output
+            # Simulate dynamics if they are included
+        if ctl == True:
+
+                # Compute control action
+        # for ii in range(n):
+                #agents[ii].ctl()
+
+                # Step agents forward
+            for ii in range(n):
+                agents[ii].step()
+
+            # Clear messages for next round
+        for ii in range(n):
+                agents[ii].clear_msgs()
+                agents[ii].clear_sum()
+            
+        # Return output
     if return_agents:
         return agents
-    
+        
