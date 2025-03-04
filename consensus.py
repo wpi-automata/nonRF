@@ -92,7 +92,7 @@ class ConsensusAgent(DynamicAgent):
         if self.flagcounter >= (self.lm) + (self.lo):
             self.rate_x = self.neighbor_sum_vel_target_x - (len(self.vel_target_msgs) * self.vel_target[0])
             self.rate_y = self.neighbor_sum_vel_target_y - (len(self.vel_target_msgs) * self.vel_target[1])
-            k=0.8
+            k=0.3
             self.vel_target[0] = round(self.vel_target[0] + (k * self.rate_x), 3)
             self.vel_target[1] = round(self.vel_target[1] + (k * self.rate_y), 3)
             self.flagcounter=0
@@ -153,7 +153,7 @@ if __name__ == "__main__":
     agents_async[1].setflagcount(5)
     agents_async[2].setflagcount(3)
     agents_async[3].setflagcount(2)
-    agents_async[4].setflagcount(6)
+    agents_async[4].setflagcount(4)
 
     # agents[0].setflagcount(6)
     # agents[1].setflagcount(6)
@@ -166,16 +166,51 @@ if __name__ == "__main__":
     count = 0
     phase = "initial_convergence"
     formation_iterations = 100
+    error_list = [] # to plot the error 
    
 
     plt.ion()
-    fig, ax = plt.subplots()
-    lmt=200
-    ax.set_xlim(-lmt, lmt)
-    ax.set_ylim(-lmt, lmt)
-    ax.set_title('Consensus Formation Control')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
+    fig_sync, ax_sync = plt.subplots()
+    fig_async, ax_async = plt.subplots() # new figure and axis for the async plot
+    fig_error = plt.figure(figsize=(10, 12))  # Create a new figure and axis for the error plot
+    ax_error1 = fig_error.add_subplot(3, 1, 1)  # Sync centroid vs target
+    ax_error2 = fig_error.add_subplot(3, 1, 2)  # Async centroid vs target 
+    ax_error3 = fig_error.add_subplot(3, 1, 3)  # Difference between centroids
+
+    sync_target_errors = []
+    async_target_errors = []
+    centroid_diff_errors = error_list
+    
+    #lmt= 1e295
+    lmt = 250
+    ax_sync.set_xlim(-lmt, lmt)
+    ax_sync.set_ylim(-lmt, lmt)
+    ax_sync.set_title('Consensus Sync Formation Control')
+    ax_sync.set_xlabel('X')
+    ax_sync.set_ylabel('Y')
+
+    ax_async.set_xlim(-lmt, lmt)
+    ax_async.set_ylim(-lmt, lmt)
+    ax_async.set_title('Consensus Async Formation Control')
+    ax_async.set_xlabel('X')
+    ax_async.set_ylabel('Y')
+
+    ax_error1.set_title('Error between Sync centroids and target over iterations')
+    ax_error1.set_xlabel('Iterations')
+    ax_error1.set_ylabel('Error')
+    ax_error1.legend()
+
+    ax_error2.set_title('Error between Async centroids and target over iterations')
+    ax_error2.set_xlabel('Iterations')
+    ax_error2.set_ylabel('Error')
+    ax_error2.legend()
+
+    ax_error3.set_title('Error between Sync and Async centroids over iterations')
+    ax_error3.set_xlabel('Iterations')
+    ax_error3.set_ylabel('Error')
+    ax_error3.legend()
+
+    plt.pause(0.1)
 
 
     #####formation of agents 
@@ -186,13 +221,19 @@ if __name__ == "__main__":
         y_async = [agent.my_value[1] for agent in agents_async]  
        
         # Visualization
-        ax.clear()
+        ax_sync.clear()
         
-        ax.set_xlim(-lmt, lmt)
-        ax.set_ylim(-lmt, lmt)
-        ax.scatter(x, y, c='blue', label='Formation Agents')
-        ax.scatter(x_async, y_async, c='yellow', label='Formation async Agents')
-        ax.legend()
+        ax_sync.set_xlim(-lmt, lmt)
+        ax_sync.set_ylim(-lmt, lmt)
+        ax_sync.scatter(x, y, c='blue', label='Formation Agents')
+        ax_sync.legend()
+
+        ax_async.clear()
+        ax_async.set_xlim(-lmt, lmt)
+        ax_async.set_ylim(-lmt, lmt)
+        ax_async.scatter(x_async, y_async, c='black', label='Formation async Agents')
+        ax_async.legend()
+
         plt.pause(0.1)
 
         if phase == "initial_convergence":
@@ -212,16 +253,31 @@ if __name__ == "__main__":
     centroid_y=sum(a.my_value[1] for a in agents)/len(agents)
     centroid_x_async=sum(a.my_value[0] for a in agents_async)/len(agents_async)
     centroid_y_async=sum(a.my_value[1] for a in agents_async)/len(agents_async)
-    ax.clear() 
-    ax.set_xlim(-lmt, lmt)
-    ax.set_ylim(-lmt, lmt)
-    ax.scatter(x, y, c='blue', label='Formation Agents')
-    ax.scatter(x_async, y_async, c='yellow', label='Formation async Agents')
-    ax.scatter(target[0], target[1], c='red', label='target')
-    ax.scatter(centroid_x, centroid_y, c='gray', label='formation  centre') 
-    ax.scatter(centroid_x_async, centroid_y_async, c='green', label='formation  centre') 
+    
+    
+    # Update synchronous plot
+    ax_sync.clear() 
+    ax_sync.set_xlim(-lmt, lmt)
+    ax_sync.set_ylim(-lmt, lmt)
+    ax_sync.scatter(x, y, c='blue', label='Formation Agents')
+    ax_sync.scatter(target[0], target[1], c='red', label='Target')
+    ax_sync.scatter(centroid_x, centroid_y, c='gray', label='Formation Centre') 
+    ax_sync.grid(True)
+    ax_sync.legend()
 
-    ax.legend()
+    # Update asynchronous plot
+    ax_async.clear() 
+    ax_async.set_xlim(-lmt, lmt)
+    ax_async.set_ylim(-lmt, lmt)
+    ax_async.scatter(x_async, y_async, c='black', label='Formation Async Agents')
+    ax_async.scatter(target[0], target[1], c='red', label='Target')
+    ax_async.scatter(centroid_x_async, centroid_y_async, c='green', label='Formation Centre')
+    ax_async.grid(True)
+    ax_async.legend()
+
+      
+
+
     plt.pause(0.1)
     print("value of centroid synchronous",centroid_x,centroid_y)
     print("value of centroid asynchronous",centroid_x_async,centroid_y_async)
@@ -247,16 +303,27 @@ if __name__ == "__main__":
         centroid_y=sum(a.my_value[1] for a in agents)/len(agents)
         centroid_x_async=sum(a.my_value[0] for a in agents_async)/len(agents_async)
         centroid_y_async=sum(a.my_value[1] for a in agents_async)/len(agents_async)
-        ax.clear() 
-        ax.set_xlim(-lmt, lmt)
-        ax.set_ylim(-lmt, lmt)
-        ax.scatter(x, y, c='blue', label='Formation Agents')
-        ax.scatter(x_async, y_async, c='black', label='Formation async Agents')
-        ax.scatter(target[0], target[1], c='red', label='target')
-        ax.scatter(centroid_x, centroid_y, c='gray', label='formation  centre')
-        ax.scatter(centroid_x_async, centroid_y_async, c='green', label='formation  centre')    
-        ax.legend()
-        plt.pause(0.1)
+
+       # Update synchronous plot
+        ax_sync.clear() 
+        ax_sync.set_xlim(-lmt, lmt)
+        ax_sync.set_ylim(-lmt, lmt)
+        ax_sync.scatter(x, y, c='blue', label='Formation Agents')
+        ax_sync.scatter(target[0], target[1], c='red', label='Target')
+        ax_sync.scatter(centroid_x, centroid_y, c='gray', label='Formation Centre')
+        ax_sync.grid(True)
+        ax_sync.legend()
+
+        # Update asynchronous plot
+        ax_async.clear() 
+        ax_async.set_xlim(-lmt, lmt)
+        ax_async.set_ylim(-lmt, lmt)
+        ax_async.scatter(x_async, y_async, c='black', label='Formation Async Agents')
+        ax_async.scatter(target[0], target[1], c='red', label='Target')
+        ax_async.scatter(centroid_x_async, centroid_y_async, c='green', label='Formation Centre')
+        ax_async.grid(True)
+        ax_async.legend()
+        
         count+=1
     
     #####move as per motion of target
@@ -339,21 +406,69 @@ if __name__ == "__main__":
         # dynamic_lmt_x = max(abs(target[0]), abs(centroid_x)) + lmt
         # dynamic_lmt_y = max(abs(target[1]), abs(centroid_y)) + lmt
 
-        ax.clear() 
-        # ax.set_xlim(-dynamic_lmt, dynamic_lmt_x)
-        # ax.set_ylim(-dynamic_lmt_y, dynamic_lmt_y)
-        ax.set_xlim(-lmt, lmt)
-        ax.set_ylim(-lmt, lmt)
+        # Calculate the error between the centroids
+        error = math.sqrt((centroid_x - centroid_x_async) ** 2 + (centroid_y - centroid_y_async) ** 2)
+        error_list.append(error)
 
-        # Plot the agents, target, and centroid
-        ax.scatter(x, y, c='blue', label='Formation Agents')
-        ax.scatter(x_async, y_async, c='black', label='Formation async Agents')
-        ax.scatter(target[0], target[1], c='red', label='target')
-        ax.scatter(centroid_x, centroid_y, c='gray', label='formation centre')   
-        ax.scatter(centroid_x_async, centroid_y_async, c='green', label='formation  centre')
-        ax.legend()
+        
+        # Update synchronous plot
+        ax_sync.clear() 
+        ax_sync.set_xlim(-lmt, lmt)
+        ax_sync.set_ylim(-lmt, lmt)
+        ax_sync.scatter(x, y, c='blue', label='Formation Agents')
+        ax_sync.scatter(target[0], target[1], c='red', label='Target')
+        ax_sync.scatter(centroid_x, centroid_y, c='gray', label='Formation Centre')
+        ax_sync.grid(True)
+        ax_sync.legend()
+
+        # Update asynchronous plot
+        ax_async.clear() 
+        ax_async.set_xlim(-lmt, lmt)
+        ax_async.set_ylim(-lmt, lmt)
+        ax_async.scatter(x_async, y_async, c='black', label='Formation Async Agents')
+        ax_async.scatter(target[0], target[1], c='red', label='Target')
+        ax_async.scatter(centroid_x_async, centroid_y_async, c='green', label='Formation Centre')
+        ax_async.grid(True)
+        ax_async.legend()
+
         plt.pause(0.5)
+
+        # Calculate errors
+        sync_target_error = math.sqrt((centroid_x - target[0])**2 + (centroid_y - target[1])**2)
+        async_target_error = math.sqrt((centroid_x_async - target[0])**2 + (centroid_y_async - target[1])**2)
+        sync_target_errors.append(sync_target_error)
+        async_target_errors.append(async_target_error)
+        
+        # Update all three error plots
+        ax_error1.clear()
+        ax_error1.plot(range(len(sync_target_errors)), sync_target_errors, 'b-', label='Sync Centroid vs Target')
+        ax_error1.set_title('Synchronous Centroid Distance from Target')
+        ax_error1.set_xlabel('Iterations')
+        ax_error1.set_ylabel('Error')
+        ax_error1.grid(True)
+        ax_error1.legend()
+
+        ax_error2.clear()
+        ax_error2.plot(range(len(async_target_errors)), async_target_errors, 'r-', label='Async Centroid vs Target')
+        ax_error2.set_title('Asynchronous Centroid Distance from Target')
+        ax_error2.set_xlabel('Iterations')
+        ax_error2.set_ylabel('Error')
+        ax_error2.grid(True)
+        ax_error2.legend()
+
+        ax_error3.clear()
+        ax_error3.plot(range(len(error_list)), error_list, 'g-', label='Difference between Centroids')
+        ax_error3.set_title('Error between Sync and Async Centroids')
+        ax_error3.set_xlabel('Iterations')
+        ax_error3.set_ylabel('Error')
+        ax_error3.grid(True)
+        ax_error3.legend()
+
+        # Adjust layout to prevent overlap
+        plt.tight_layout()
+        plt.pause(0.1)
+
 
     plt.ioff()
     plt.show()
-
+    fig_error.show()  # Show the error plot
