@@ -4,6 +4,16 @@ from distributed_algorithm import run_sim
 import matplotlib.pyplot as plt
 import random as rand
 import math
+import os
+import subprocess
+
+# Function to save the frames
+def save_frame(fig, frame_num, output_dir='frames'):
+    # Create output directory if it doesn't exist
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    # Save the figure
+    fig.savefig(f'{output_dir}/frame_{frame_num:05d}.png')
 
 class ConsensusAgent(DynamicAgent):
     
@@ -170,12 +180,15 @@ if __name__ == "__main__":
    
 
     plt.ion()
-    fig_sync, ax_sync = plt.subplots()
-    fig_async, ax_async = plt.subplots() # new figure and axis for the async plot
-    fig_error = plt.figure(figsize=(10, 12))  # Create a new figure and axis for the error plot
-    ax_error1 = fig_error.add_subplot(3, 1, 1)  # Sync centroid vs target
-    ax_error2 = fig_error.add_subplot(3, 1, 2)  # Async centroid vs target 
-    ax_error3 = fig_error.add_subplot(3, 1, 3)  # Difference between centroids
+    fig = plt.figure(figsize=(15, 12))
+    gs = plt.GridSpec(2, 3, figure=fig)  # Create a 2x3 grid
+
+    # Create subplots with specific grid positions
+    ax_sync = fig.add_subplot(gs[0, 0])    # Top left
+    ax_async = fig.add_subplot(gs[0, 2])      # Top right
+    ax_error1 = fig.add_subplot(gs[1, 0])     # Bottom left
+    ax_error2 = fig.add_subplot(gs[1, 1])     # Bottom middle
+    ax_error3 = fig.add_subplot(gs[1, 2])     # Bottom right
 
     sync_target_errors = []
     async_target_errors = []
@@ -195,17 +208,17 @@ if __name__ == "__main__":
     ax_async.set_xlabel('X')
     ax_async.set_ylabel('Y')
 
-    ax_error1.set_title('Error between Sync centroids and target over iterations')
+    ax_error1.set_title('Error b/w Sync centroids and target over iterations')
     ax_error1.set_xlabel('Iterations')
     ax_error1.set_ylabel('Error')
     ax_error1.legend()
 
-    ax_error2.set_title('Error between Async centroids and target over iterations')
+    ax_error2.set_title('Error b/w Async centroids and target over iterations')
     ax_error2.set_xlabel('Iterations')
     ax_error2.set_ylabel('Error')
     ax_error2.legend()
 
-    ax_error3.set_title('Error between Sync and Async centroids over iterations')
+    ax_error3.set_title('Error b/w Sync and Async centroids over iterations')
     ax_error3.set_xlabel('Iterations')
     ax_error3.set_ylabel('Error')
     ax_error3.legend()
@@ -329,7 +342,7 @@ if __name__ == "__main__":
     #####move as per motion of target
     ###start simple with giving motion to target
     ####another while loop to consensus on velocity
-    test_iterations = 1000
+    test_iterations = 100
     count = 0
     prev_x = target[0]
     prev_y = target[1]
@@ -466,9 +479,11 @@ if __name__ == "__main__":
 
         # Adjust layout to prevent overlap
         plt.tight_layout()
+        save_frame(fig, count) 
+
         plt.pause(0.1)
 
 
     plt.ioff()
-    plt.show()
-    fig_error.show()  # Show the error plot
+    
+    plt.close(fig)
