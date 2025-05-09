@@ -2,18 +2,24 @@ import networkx as nx
 from network_agent import DynamicAgent
 from distributed_algorithm import run_sim
 import matplotlib.pyplot as plt
-import numpy as np
+import matplotlib.patches as mpatches
 import random as rand
 import math
-from utilities import update_graph_with_fov, save_frame, draw_fov, check_in_fov, modified_fov_adaptation, check_minimum_connectivity, recover_isolated_agents
-from utilities import calculate_fov_direction, update_agent_fov_directions
-#FoV Parameters
-FOV_ANGLE = 144 # Field of view angle in degrees (equivalent to 72 degrees on each side)
-FOV_RANGE = 500 # Maximum range of the FOV in  meters
+import os
+import subprocess
+
+# Function to save the frames
+def save_frame(fig, frame_num, output_dir='frames'):
+    # Create output directory if it doesn't exist
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    # Save the figure
+    fig.savefig(f'{output_dir}/frame_{frame_num:05d}.png')
 
 class ConsensusAgent(DynamicAgent):
     
-    def __init__(self,n, id=0, value=[],vel_target=[],check=False, offset=(0,0), velocity=0.1):
+    def __init__(self,n, id=0, value=[],vel_target=[],check=False, offset=(0,0), velocity=0.1,
+                 fov_angle=120, fov_range=100):
         self.my_value = value
         self.id = id
         self.msgs = []
@@ -29,8 +35,6 @@ class ConsensusAgent(DynamicAgent):
         self.lm = 1
         self.lo = 5
         self.flagcounter = 0
-        self.fov_direction = 0  # Current FOV bearing in radians
-        self.neighbor_count = 0  # Track number of visible neighbors
 
         ####for consensus on target velocity 
         ############################################
@@ -39,6 +43,12 @@ class ConsensusAgent(DynamicAgent):
         self.neighbor_sum_vel_target_y = 0
         self.vel_target_msgs=[]
         ###########################################
+
+        # Field of View (FoV) attributes
+        self.fov_angle = fov_angle  # in degrees
+        self.fov_range = fov_range  # max distance to see
+        self.heading = 0  # angle in radians, 0 means facing right (x+)
+        self.visible_neighbors = []  # list of agent ids in FoV
 
     def msg(self):
         return self.my_value  # Include sender ID in the message
@@ -49,7 +59,6 @@ class ConsensusAgent(DynamicAgent):
         # Calculate the consensus rate
         self.flagcounter += 1
         if self.flagcounter >= (self.lm) + (self.lo):
-
             desired_x=self.dij_x-(len(self.offset_msgs)*self.offset[0])
             desired_y=self.dij_y-(len(self.offset_msgs)*self.offset[1])
             
@@ -59,49 +68,6 @@ class ConsensusAgent(DynamicAgent):
             self.my_value[0] = round(self.my_value[0] + (k * self.rate_x), 3)
             self.my_value[1] = round(self.my_value[1] + (k * self.rate_y), 3)
             self.flagcounter=0
-            #-----------------
-            # Calculate target-relative position
-            # target_vector = np.array(target) - np.array(self.my_value)
-            # target_influence = 0.2 * target_vector
-            
-            # # Calculate neighbor-relative positions
-            # neighbor_influence = np.array([0.0, 0.0])
-            # if self.msgs:
-            #     avg_neighbor_pos = np.array([
-            #         sum(p[0] for p in self.msgs)/len(self.msgs),
-            #         sum(p[1] for p in self.msgs)/len(self.msgs)
-            #     ])
-            #     neighbor_influence = 0.8 * (avg_neighbor_pos - self.my_value + self.offset)
-            
-            # # Combined update
-            # total_influence = target_influence + neighbor_influence
-            # self.my_value += self.velocity * total_influence
-            # self.flagcounter = 0
-            #------------------
-            # Calculate target-relative position
-            # target_vector = np.array(target) - np.array(self.my_value)
-            # target_influence = 0.2 * target_vector
-
-            # # Calculate neighbor-relative positions
-            # neighbor_influence = np.array([0.0, 0.0])
-            # if self.msgs:
-            #     avg_neighbor_pos = np.array([
-            #         sum(p[0] for p in self.msgs) / len(self.msgs),
-            #         sum(p[1] for p in self.msgs) / len(self.msgs)
-            #     ])
-            #     neighbor_influence = 0.8 * (avg_neighbor_pos - self.my_value + self.offset)
-            # 
-            # # Combined influence
-            # total_influence = target_influence + neighbor_influence
-
-            # # Explicit velocity control update
-            # k = 0.3  # Explicit control gain
-            # self.my_value[0] = round(self.my_value[0] + (k * total_influence[0]), 3)
-            # self.my_value[1] = round(self.my_value[1] + (k * total_influence[1]), 3)
-
-            # self.flagcounter = 0
-
-            
 
     def clear_msgs(self):
         self.msgs = []
@@ -132,11 +98,6 @@ class ConsensusAgent(DynamicAgent):
 
     def step(self):
         pass
-    def scan_for_neighbors(self, scan_speed=0.1):
-        """Rotate FOV to scan for neighbors when isolated"""
-        self.fov_direction += scan_speed
-        if self.fov_direction > math.pi:
-            self.fov_direction -= 2 * math.pi
 
     ####consensus on target velocity functions
     ##################################################################################################################
@@ -170,11 +131,52 @@ class ConsensusAgent(DynamicAgent):
         self.neighbor_sum_vel_target_y=0
     ##################################################################################################################
     
+    def update_visible_neighbors(self, agents):
+        """Update the list of neighbors within the FoV."""
+        self.visible_neighbors = []
+        my_pos = self.my_value
+        for agent in agents:
+            if agent.id == self.id:
+                continue
+            dx = agent.my_value[0] - my_pos[0]
+            dy = agent.my_value[1] - my_pos[1]
+            dist = math.hypot(dx, dy)
+            if dist > self.fov_range:
+                continue
+            angle_to_agent = math.atan2(dy, dx)
+            rel_angle = (angle_to_agent - self.heading + math.pi) % (2*math.pi) - math.pi
+            if abs(rel_angle) <= math.radians(self.fov_angle/2):
+                self.visible_neighbors.append(agent.id)
 
-def make_agents(n, list, offsets, velocity):
+    def maximize_fov_neighbors(self, agents, angle_step=0.1):
+        """Optionally adjust heading to maximize visible neighbors."""
+        best_heading = self.heading
+        max_seen = 0
+        for delta in [i*angle_step for i in range(int(2*math.pi/angle_step))]:
+            test_heading = delta
+            seen = 0
+            my_pos = self.my_value
+            for agent in agents:
+                if agent.id == self.id:
+                    continue
+                dx = agent.my_value[0] - my_pos[0]
+                dy = agent.my_value[1] - my_pos[1]
+                dist = math.hypot(dx, dy)
+                if dist > self.fov_range:
+                    continue
+                angle_to_agent = math.atan2(dy, dx)
+                rel_angle = (angle_to_agent - test_heading + math.pi) % (2*math.pi) - math.pi
+                if abs(rel_angle) <= math.radians(self.fov_angle/2):
+                    seen += 1
+            if seen > max_seen:
+                max_seen = seen
+                best_heading = test_heading
+        self.heading = best_heading
+
+def make_agents(n, list, offsets, velocity, fov_angle=120, fov_range=100):
     agents = []
     for ii in range(n):
-        agents.append(ConsensusAgent(n,ii, list[ii],[0,0], False, offsets[ii], velocity))
+        agents.append(ConsensusAgent(n,ii, list[ii],[0,0], False, offsets[ii], velocity, fov_angle, fov_range))
     return agents
 
 def print_max_id(agents):
@@ -189,7 +191,6 @@ if __name__ == "__main__":
     l = [[100, 15], [1, -312], [-80, 102], [90, 176], [-190, 220]]
     #l1 = [[10, 150], [199, -31], [80, -102], [-90, 16], [90, -220]]
     l1 = [[100, 15], [1, -312], [-80, 102], [90, 176], [-190, 220]]
-
     # Define pentagon offsets
     radius = 20
     offsets = []
@@ -198,23 +199,17 @@ if __name__ == "__main__":
         dx = radius * math.cos(angle)
         dy = radius * math.sin(angle)
         offsets.append((dx, dy))
-
-    # Define the formation control parameters
-    formation_threshold = 0.1  # Threshold for formation convergence
-    prev_positions = None
-    stable_count = 0
-    required_stable_iterations = 10  # Number of iterations positions must remain stable
-
     
-
     velocity = 0.1  # Velocity factor to control the speed of convergence
-    agents = make_agents(n, l, offsets, velocity)
+    fov_angle = 120  # degrees
+    fov_range = 100  # units
+    agents = make_agents(n, l, offsets, velocity, fov_angle, fov_range)
     agents[0].setflagcount(6)
     agents[1].setflagcount(6)
     agents[2].setflagcount(6)
     agents[3].setflagcount(6)
     agents[4].setflagcount(6)
-    agents_async = make_agents(n, l1, offsets, velocity)
+    agents_async = make_agents(n, l1, offsets, velocity, fov_angle, fov_range)
     agents_async[0].setflagcount(1)
     agents_async[1].setflagcount(5)
     agents_async[2].setflagcount(3)
@@ -282,196 +277,63 @@ if __name__ == "__main__":
     plt.pause(0.1)
 
 
-    target = [0, 0]  # Initialize target position
-
     #####formation of agents 
     while count < formation_iterations:
         x = [agent.my_value[0] for agent in agents]  # Include all agents
         y = [agent.my_value[1] for agent in agents]
         x_async = [agent.my_value[0] for agent in agents_async]  # Include all agents
-        y_async = [agent.my_value[1] for agent in agents_async]  # Include all agents
-        
-       
-        if count % 1 == 0:  # Every iteration
-            # Track connectivity stats
-            num_edges = G.number_of_edges()
-            avg_degree = sum(dict(G.degree()).values()) / len(agents)
-            isolated_agents = check_minimum_connectivity(agents, G)
-    
-        # Log statistics
-        print(f"Iteration {count}: Edges={num_edges}, Avg Degree={avg_degree:.2f}, Isolated={len(isolated_agents)}")
-        
-        # Apply recovery only to completely isolated agents
-        if isolated_agents:
-            recover_isolated_agents(agents, isolated_agents, target)
+        y_async = [agent.my_value[1] for agent in agents_async]  
 
-
-        target = [target[0], target[1]]  # Create a list for target position  # Define target position
-        # Get current positions
-        current_positions = [(agent.my_value[0], agent.my_value[1]) for agent in agents]
-        current_positions_async = [(agent.my_value[0], agent.my_value[1]) for agent in agents_async]
-        # Check if positions have stabilized
-        if prev_positions is not None:
-            # Calculate maximum movement of any agent
-            max_movement = max(math.sqrt((curr[0] - prev[0])**2 + (curr[1] - prev[1])**2)
-                            for curr, prev in zip(current_positions, prev_positions))
-            max_movement_async = max(math.sqrt((curr[0] - prev[0])**2 + (curr[1] - prev[1])**2)
-                                for curr, prev in zip(current_positions_async, prev_positions_async))
-            
-            if max_movement < formation_threshold and max_movement_async < formation_threshold:
-                stable_count += 1
-            else:
-                stable_count = 0
-                
-            # Break if formation has been stable for enough iterations
-            if stable_count >= required_stable_iterations:
-                print(f"Formation converged after {count} iterations")
-                break
-        
-        prev_positions = current_positions
-        prev_positions_async = current_positions_async
-        
-        # Update FOV directions
-        update_agent_fov_directions(agents, target, neighbors_only=True)
-        update_agent_fov_directions(agents_async, target, neighbors_only=True)
-        # Draw FOV for sync agents
+        # Update FoV for all agents
         for agent in agents:
-            draw_fov(ax_sync, agent.my_value, agent.fov_direction, 
-                    math.radians(FOV_ANGLE), FOV_RANGE, 'blue', 0.1)
-        
-        # Draw FOV for async agents
+            agent.maximize_fov_neighbors(agents)
+            agent.update_visible_neighbors(agents)
         for agent in agents_async:
-            draw_fov(ax_async, agent.my_value, agent.fov_direction, 
-                    math.radians(FOV_ANGLE), FOV_RANGE, 'red', 0.1)
+            agent.maximize_fov_neighbors(agents_async)
+            agent.update_visible_neighbors(agents_async)
 
-        
-        # Update graph with FOV constraints
-
-        update_graph_with_fov(agents, agents_async,target, G, fov_angle=FOV_ANGLE, max_range=FOV_RANGE) # Update graph with FOV constraints
-        # Check if graph is connected enough for formation control
-        if not nx.is_connected(G):
-            print(f"Warning: Graph not fully connected at iteration {count}")
-        
-
-        # Override FOV direction to face outward (pentagon offset direction)
-        for i, agent in enumerate(agents):
-            # Get neighbor positions (excluding self)
-            neighbor_positions = [a.my_value for j, a in enumerate(agents) if j != i]
-            
-            # Calculate dynamic FOV direction
-            agent.fov_direction = calculate_fov_direction(agent, target, neighbor_positions)
-                    
-            # Set FOV direction based on formation offset
-            fov_direction = math.atan2(agent.offset[1], agent.offset[0])
-            
-            # Update edges based on mutual visibility
-            for j, other_agent in enumerate(agents):
-                if i == j:
-                    continue
-                    
-                # Bidirectional visibility check
-                sees_other = check_in_fov(agent.my_value, other_agent.my_value,
-                                        agent.fov_direction, math.radians(FOV_ANGLE), FOV_RANGE)
-                seen_by_other = check_in_fov(other_agent.my_value, agent.my_value,
-                                        other_agent.fov_direction, math.radians(FOV_ANGLE), FOV_RANGE)
-                
-                if sees_other and seen_by_other:
-                    G.add_edge(i, j)
-                    agent.neighbor_count += 1
-                elif G.has_edge(i, j):
-                    G.remove_edge(i, j)
-                    agent.neighbor_count = max(0, agent.neighbor_count-1)
-
-        x = [agent.my_value[0] for agent in agents]
-        y = [agent.my_value[1] for agent in agents]
         # Visualization
         ax_sync.clear()
-        
         ax_sync.set_xlim(-lmt, lmt)
         ax_sync.set_ylim(-lmt, lmt)
-
-
-
+        ax_sync.scatter(x, y, c='blue', label='Formation Agents')
+        # Draw FoV for each agent
+        for agent in agents:
+            fov_center = agent.my_value
+            fov_radius = agent.fov_range
+            fov_angle = agent.fov_angle
+            heading_deg = math.degrees(agent.heading)
+            wedge = mpatches.Wedge(
+                (fov_center[0], fov_center[1]),
+                fov_radius,
+                heading_deg - fov_angle/2,
+                heading_deg + fov_angle/2,
+                alpha=0.15,
+                color='blue'
+            )
+            ax_sync.add_patch(wedge)
         ax_sync.legend()
 
         ax_async.clear()
         ax_async.set_xlim(-lmt, lmt)
         ax_async.set_ylim(-lmt, lmt)
-
-
-
-        ax_async.legend()
-
-        # Draw FOV for sync agents
-        for agent in agents:
-            fov_direction = math.atan2(target[1] - agent.my_value[1], 
-                                    target[0] - agent.my_value[0])
-            draw_fov(ax_sync, agent.my_value, fov_direction, 
-                    math.radians(FOV_ANGLE), FOV_RANGE, 'red', 0.1)
-        # # Draw FOV for sync agents
-        # for agent in agents:
-        #     other_positions = [[a.my_value[0], a.my_value[1]] for a in agents if a.id != agent.id]
-        #     fov_direction = math.atan2(agent.offset[1], agent.offset[0])
-        #     draw_fov(ax_sync, agent.my_value, fov_direction, 
-        #             math.radians(FOV_ANGLE), FOV_RANGE, 'blue', 0.1)
-        # Draw FOV for async agents
-        for agent in agents_async:
-            fov_direction = math.atan2(target[1] - agent.my_value[1], 
-                                    target[0] - agent.my_value[0])
-            draw_fov(ax_async, agent.my_value, fov_direction, 
-                    math.radians(FOV_ANGLE), FOV_RANGE, 'red', 0.1)
-        # Draw FOV for async agents
-        # for agent in agents_async:
-        #     other_positions = [[a.my_value[0], a.my_value[1]] for a in agents_async if a.id != agent.id]
-        #     fov_direction = math.atan2(agent.offset[1], agent.offset[0])
-        #     draw_fov(ax_async, agent.my_value, fov_direction, 
-        #             math.radians(FOV_ANGLE), FOV_RANGE, 'red', 0.1)
-        
-        # Draw communication links based on graph edges
-        for edge in G.edges():
-            # For synchronous agents
-            if edge[0] < len(agents) and edge[1] < len(agents):
-                ax_sync.plot([agents[edge[0]].my_value[0], agents[edge[1]].my_value[0]],
-                            [agents[edge[0]].my_value[1], agents[edge[1]].my_value[1]],
-                            'b--', alpha=0.3)
-            # For asynchronous agents
-            elif edge[0] >= len(agents) and edge[1] >= len(agents):
-                i, j = edge[0]-len(agents), edge[1]-len(agents)
-                ax_async.plot([agents_async[i].my_value[0], agents_async[j].my_value[0]],
-                            [agents_async[i].my_value[1], agents_async[j].my_value[1]],
-                            'r--', alpha=0.3)
-        
-        # # Draw communication links based on FOV visibility
-        # for i, agent1 in enumerate(agents):
-        #     for j, agent2 in enumerate(agents):
-        #         if i != j:
-        #             # Check if agents are in each other's FOV
-        #             if (check_in_fov(agent1.my_value, agent2.my_value, agent1.fov_direction, 
-        #                             math.radians(FOV_ANGLE), FOV_RANGE) and
-        #                 check_in_fov(agent2.my_value, agent1.my_value, agent2.fov_direction, 
-        #                             math.radians(FOV_ANGLE), FOV_RANGE)):
-        #                 ax_sync.plot([agent1.my_value[0], agent2.my_value[0]],
-        #                         [agent1.my_value[1], agent2.my_value[1]],
-        #                         'b--', alpha=0.3)
-
-        # # Draw communication links for async agents
-        # for i, agent1 in enumerate(agents_async):
-        #     for j, agent2 in enumerate(agents_async):
-        #         if i != j:
-        #             # Check if agents are in each other's FOV
-        #             if (check_in_fov(agent1.my_value, agent2.my_value, agent1.fov_direction, 
-        #                             math.radians(FOV_ANGLE), FOV_RANGE) and
-        #                 check_in_fov(agent2.my_value, agent1.my_value, agent2.fov_direction, 
-        #                             math.radians(FOV_ANGLE), FOV_RANGE)):
-        #                 ax_async.plot([agent1.my_value[0], agent2.my_value[0]],
-        #                             [agent1.my_value[1], agent2.my_value[1]],
-        #                             'r--', alpha=0.3)
-                
-        # Update synchronous plot         
-        ax_sync.scatter(x, y, c='blue', label='Formation Agents')
-        # Update asynchronous plot
         ax_async.scatter(x_async, y_async, c='black', label='Formation async Agents')
-
+        # Draw FoV for each async agent
+        for agent in agents_async:
+            fov_center = agent.my_value
+            fov_radius = agent.fov_range
+            fov_angle = agent.fov_angle
+            heading_deg = math.degrees(agent.heading)
+            wedge = mpatches.Wedge(
+                (fov_center[0], fov_center[1]),
+                fov_radius,
+                heading_deg - fov_angle/2,
+                heading_deg + fov_angle/2,
+                alpha=0.15,
+                color='black'
+            )
+            ax_async.add_patch(wedge)
+        ax_async.legend()
 
         plt.pause(0.1)
 
@@ -493,8 +355,21 @@ if __name__ == "__main__":
     centroid_x_async=sum(a.my_value[0] for a in agents_async)/len(agents_async)
     centroid_y_async=sum(a.my_value[1] for a in agents_async)/len(agents_async)
     
-    
-    
+    # Update FoV for all agents before plotting
+    for agent in agents:
+        agent.maximize_fov_neighbors(agents)
+        agent.update_visible_neighbors(agents)
+        # --- Make agent heading point toward target ---
+        dx = target[0] - agent.my_value[0]
+        dy = target[1] - agent.my_value[1]
+        agent.heading = math.atan2(dy, dx)
+    for agent in agents_async:
+        agent.maximize_fov_neighbors(agents_async)
+        agent.update_visible_neighbors(agents_async)
+        dx = target[0] - agent.my_value[0]
+        dy = target[1] - agent.my_value[1]
+        agent.heading = math.atan2(dy, dx)
+
     # Update synchronous plot
     ax_sync.clear() 
     ax_sync.set_xlim(-lmt, lmt)
@@ -502,15 +377,22 @@ if __name__ == "__main__":
     ax_sync.scatter(x, y, c='blue', label='Formation Agents')
     ax_sync.scatter(target[0], target[1], c='red', label='Target')
     ax_sync.scatter(centroid_x, centroid_y, c='gray', label='Formation Centre') 
-    ax_sync.grid(True)
-    # Draw FOV for sync agents
+    # Draw FoV for each agent
     for agent in agents:
-        other_positions = [[a.my_value[0], a.my_value[1]] for a in agents if a.id != agent.id]
-        fov_direction = math.atan2(agent.offset[1], agent.offset[0])
-        draw_fov(ax_sync, agent.my_value, fov_direction, 
-                math.radians(FOV_ANGLE), FOV_RANGE, 'blue', 0.1)
-    
-   
+        fov_center = agent.my_value
+        fov_radius = agent.fov_range
+        fov_angle = agent.fov_angle
+        heading_deg = math.degrees(agent.heading)
+        wedge = mpatches.Wedge(
+            (fov_center[0], fov_center[1]),
+            fov_radius,
+            heading_deg - fov_angle/2,
+            heading_deg + fov_angle/2,
+            alpha=0.15,
+            color='blue'
+        )
+        ax_sync.add_patch(wedge)
+    ax_sync.grid(True)
     ax_sync.legend()
 
     # Update asynchronous plot
@@ -519,26 +401,28 @@ if __name__ == "__main__":
     ax_async.set_ylim(-lmt, lmt)
     ax_async.scatter(x_async, y_async, c='black', label='Formation Async Agents')
     ax_async.scatter(target[0], target[1], c='red', label='Target')
-    ax_async.scatter(centroid_x_async, centroid_y_async, c='red', label='Formation Centre')
-    ax_async.grid(True)
-    #  # Draw FOV for async agents
-    # for agent in agents_async:
-    #     fov_direction = math.atan2(target[1] - agent.my_value[1], 
-    #                             target[0] - agent.my_value[0])
-    #     draw_fov(ax_async, agent.my_value, fov_direction, 
-    #             math.radians(FOV_ANGLE), FOV_RANGE, 'red', 0.1)
-    # Draw FOV for async agents
+    ax_async.scatter(centroid_x_async, centroid_y_async, c='green', label='Formation Centre')
+    # Draw FoV for each async agent
     for agent in agents_async:
-        other_positions = [[a.my_value[0], a.my_value[1]] for a in agents_async if a.id != agent.id]
-        fov_direction = math.atan2(agent.offset[1], agent.offset[0])
-        draw_fov(ax_async, agent.my_value, fov_direction, 
-                math.radians(FOV_ANGLE), FOV_RANGE, 'red', 0.1)
-    
+        fov_center = agent.my_value
+        fov_radius = agent.fov_range
+        fov_angle = agent.fov_angle
+        heading_deg = math.degrees(agent.heading)
+        wedge = mpatches.Wedge(
+            (fov_center[0], fov_center[1]),
+            fov_radius,
+            heading_deg - fov_angle/2,
+            heading_deg + fov_angle/2,
+            alpha=0.15,
+            color='black'
+        )
+        ax_async.add_patch(wedge)
+    ax_async.grid(True)
     ax_async.legend()
 
       
 
-    update_graph_with_fov(agents, agents_async, target, G, fov_angle=FOV_ANGLE, max_range=FOV_RANGE)
+
     plt.pause(0.1)
     print("value of centroid synchronous",centroid_x,centroid_y)
     print("value of centroid asynchronous",centroid_x_async,centroid_y_async)
@@ -549,8 +433,6 @@ if __name__ == "__main__":
     async_dx_per_iter=(target[0]-centroid_x_async)/cover_iterations
     async_dy_per_iter=(target[1]-centroid_y_async)/cover_iterations
     count=0
-
-
     while count<cover_iterations:
         for agent in agents:
             agent.my_value[0]+=dx_per_iter
@@ -567,13 +449,38 @@ if __name__ == "__main__":
         centroid_x_async=sum(a.my_value[0] for a in agents_async)/len(agents_async)
         centroid_y_async=sum(a.my_value[1] for a in agents_async)/len(agents_async)
 
-       # Update synchronous plot
+        # --- Update heading to keep target in FoV ---
+        for agent in agents:
+            dx = target[0] - agent.my_value[0]
+            dy = target[1] - agent.my_value[1]
+            agent.heading = math.atan2(dy, dx)
+        for agent in agents_async:
+            dx = target[0] - agent.my_value[0]
+            dy = target[1] - agent.my_value[1]
+            agent.heading = math.atan2(dy, dx)
+
+        # Update synchronous plot
         ax_sync.clear() 
         ax_sync.set_xlim(-lmt, lmt)
         ax_sync.set_ylim(-lmt, lmt)
         ax_sync.scatter(x, y, c='blue', label='Formation Agents')
         ax_sync.scatter(target[0], target[1], c='red', label='Target')
         ax_sync.scatter(centroid_x, centroid_y, c='gray', label='Formation Centre')
+        # Draw FoV for each agent
+        for agent in agents:
+            fov_center = agent.my_value
+            fov_radius = agent.fov_range
+            fov_angle = agent.fov_angle
+            heading_deg = math.degrees(agent.heading)
+            wedge = mpatches.Wedge(
+                (fov_center[0], fov_center[1]),
+                fov_radius,
+                heading_deg - fov_angle/2,
+                heading_deg + fov_angle/2,
+                alpha=0.15,
+                color='blue'
+            )
+            ax_sync.add_patch(wedge)
         ax_sync.grid(True)
         ax_sync.legend()
 
@@ -584,9 +491,23 @@ if __name__ == "__main__":
         ax_async.scatter(x_async, y_async, c='black', label='Formation Async Agents')
         ax_async.scatter(target[0], target[1], c='red', label='Target')
         ax_async.scatter(centroid_x_async, centroid_y_async, c='green', label='Formation Centre')
+        # Draw FoV for each async agent
+        for agent in agents_async:
+            fov_center = agent.my_value
+            fov_radius = agent.fov_range
+            fov_angle = agent.fov_angle
+            heading_deg = math.degrees(agent.heading)
+            wedge = mpatches.Wedge(
+                (fov_center[0], fov_center[1]),
+                fov_radius,
+                heading_deg - fov_angle/2,
+                heading_deg + fov_angle/2,
+                alpha=0.15,
+                color='black'
+            )
+            ax_async.add_patch(wedge)
         ax_async.grid(True)
         ax_async.legend()
-        
         
         count+=1
     
@@ -610,20 +531,41 @@ if __name__ == "__main__":
             agent_async.vel_target[0] = ((1 - err) * target[0]) - prev_x
             agent_async.vel_target[1] = ((1 - err) * target[1]) - prev_y
 
+        # --- Update heading to keep target in FoV ---
+        for agent in agents:
+            dx = target[0] - agent.my_value[0]
+            dy = target[1] - agent.my_value[1]
+            agent.heading = math.atan2(dy, dx)
+        for agent in agents_async:
+            dx = target[0] - agent.my_value[0]
+            dy = target[1] - agent.my_value[1]
+            agent.heading = math.atan2(dy, dx)
+
         inner_count = 0
         while inner_count < 5000:  # Inner loop to check velocity differences
             # Check if all agents meet the condition to break out of inner loop
             if (all(abs(agent.vel_target[0] - target[0]) < 3 and ####if both of them have converged before 100
              abs(agent.vel_target[1] - target[1]) < 3
-             for agent in agents) and all(abs(agent_async.vel_target[0] - target[0]) < 10 and 
-             abs(agent_async.vel_target[1] - target[1]) < 10
-             for agent_async in agents_async)):
+             for agent in agents) and
+        all(abs(agent_async.vel_target[0] - target[0]) < 10 and 
+            abs(agent_async.vel_target[1] - target[1]) < 10
+            for agent_async in agents_async)):
                 break  
 
             # Run simulation and update agents
             agents = run_sim(agents, G, return_agents=True, ctl=True, target_pos=True)
             agents_async = run_sim(agents_async, G, return_agents=True, ctl=True, target_pos=True)
+            # --- Update heading to keep target in FoV after state update ---
+            for agent in agents:
+                dx = target[0] - agent.my_value[0]
+                dy = target[1] - agent.my_value[1]
+                agent.heading = math.atan2(dy, dx)
+            for agent in agents_async:
+                dx = target[0] - agent.my_value[0]
+                dy = target[1] - agent.my_value[1]
+                agent.heading = math.atan2(dy, dx)
             inner_count += 1
+
         for agent in agents:
             print("agent value",agent.vel_target)
             print("flag value",agent.flagcounter)
@@ -681,21 +623,25 @@ if __name__ == "__main__":
         ax_sync.scatter(x, y, c='blue', label='Formation Agents')
         ax_sync.scatter(target[0], target[1], c='red', label='Target')
         ax_sync.scatter(centroid_x, centroid_y, c='gray', label='Formation Centre')
-        ax_sync.grid(True)
-        # Draw FOV for sync agents
+        # Draw FoV for each agent
         for agent in agents:
-            fov_direction = math.atan2(target[1] - agent.my_value[1], 
-                                    target[0] - agent.my_value[0])
-            draw_fov(ax_sync, agent.my_value, fov_direction, 
-                    math.radians(FOV_ANGLE), FOV_RANGE, 'red', 0.1)
-        # Draw FOV for sync agents
-        # for agent in agents:
-        #     other_positions = [[a.my_value[0], a.my_value[1]] for a in agents if a.id != agent.id]
-        #     fov_direction = math.atan2(agent.offset[1], agent.offset[0])
-        #     draw_fov(ax_sync, agent.my_value, fov_direction, 
-        #             math.radians(FOV_ANGLE), FOV_RANGE, 'blue', 0.1)
-
+            fov_center = agent.my_value
+            fov_radius = agent.fov_range
+            fov_angle = agent.fov_angle
+            heading_deg = math.degrees(agent.heading)
+            wedge = mpatches.Wedge(
+                (fov_center[0], fov_center[1]),
+                fov_radius,
+                heading_deg - fov_angle/2,
+                heading_deg + fov_angle/2,
+                alpha=0.15,
+                color='blue'
+            )
+            ax_sync.add_patch(wedge)
+        ax_sync.grid(True)
         ax_sync.legend()
+
+        
 
         # Update asynchronous plot
         ax_async.clear() 
@@ -704,21 +650,24 @@ if __name__ == "__main__":
         ax_async.scatter(x_async, y_async, c='black', label='Formation Async Agents')
         ax_async.scatter(target[0], target[1], c='red', label='Target')
         ax_async.scatter(centroid_x_async, centroid_y_async, c='green', label='Formation Centre')
-        ax_async.grid(True)
-        #  # Draw FOV for async agents
+        # Draw FoV for each async agent
         for agent in agents_async:
-            fov_direction = math.atan2(target[1] - agent.my_value[1], 
-                                    target[0] - agent.my_value[0])
-            draw_fov(ax_async, agent.my_value, fov_direction, 
-                    math.radians(FOV_ANGLE), FOV_RANGE, 'red', 0.1)
-        # Draw FOV for async agents
-        # for agent in agents_async:
-        #     other_positions = [[a.my_value[0], a.my_value[1]] for a in agents_async if a.id != agent.id]
-        #     fov_direction = math.atan2(agent.offset[1], agent.offset[0])
-        #     draw_fov(ax_async, agent.my_value, fov_direction, 
-        #             math.radians(FOV_ANGLE), FOV_RANGE, 'red', 0.1)
+            fov_center = agent.my_value
+            fov_radius = agent.fov_range
+            fov_angle = agent.fov_angle
+            heading_deg = math.degrees(agent.heading)
+            wedge = mpatches.Wedge(
+                (fov_center[0], fov_center[1]),
+                fov_radius,
+                heading_deg - fov_angle/2,
+                heading_deg + fov_angle/2,
+                alpha=0.15,
+                color='black'
+            )
+            ax_async.add_patch(wedge)
+        ax_async.grid(True)
         ax_async.legend()
-        update_graph_with_fov(agents, agents_async, target, G, fov_angle=FOV_ANGLE, max_range=FOV_RANGE)
+
         plt.pause(0.5)
 
         # Calculate errors
@@ -761,4 +710,4 @@ if __name__ == "__main__":
 
     plt.ioff()
     
-    plt.close(fig)
+plt.close(fig)

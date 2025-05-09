@@ -486,4 +486,5 @@ if __name__ == "__main__":
 
     plt.ioff()
     
-    plt.close(fig)
+plt.close(fig)
+# 
