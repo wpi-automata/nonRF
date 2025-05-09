@@ -176,7 +176,7 @@ class ConsensusAgent(DynamicAgent):
 def make_agents(n, list, offsets, velocity, fov_angle=120, fov_range=100):
     agents = []
     for ii in range(n):
-        agents.append(ConsensusAgent(n,ii, list[ii],[0,0], False, offsets[ii], velocity, fov_angle, fov_range))
+        agents.append(ConsensusAgent(n, ii, list[ii], [0,0], False, offsets[ii], velocity, fov_angle, fov_range))
     return agents
 
 def print_max_id(agents):
@@ -199,10 +199,12 @@ if __name__ == "__main__":
         dx = radius * math.cos(angle)
         dy = radius * math.sin(angle)
         offsets.append((dx, dy))
-    
+    # FoV control
     velocity = 0.1  # Velocity factor to control the speed of convergence
-    fov_angle = 120  # degrees
-    fov_range = 100  # units
+    fov_angle = 72  # degrees, set your desired FoV angle here
+    fov_range = 250  # units, set your desired FoV range here
+
+
     agents = make_agents(n, l, offsets, velocity, fov_angle, fov_range)
     agents[0].setflagcount(6)
     agents[1].setflagcount(6)
